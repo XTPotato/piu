@@ -1,7 +1,7 @@
 # piu
 
-A 5-panel, upward-scrolling rhythm game in the style of Andamiro's *Pump It Up*.
-Runs on Windows and Linux on a pygame-ce / SDL2 stack.
+A 5-panel, upward-scrolling rhythm game in the style of Andamiro's *Pump It Up*,
+compiled to WebAssembly and played in the browser.
 
 ## What this is
 
@@ -21,20 +21,43 @@ It loads charts in three formats:
 ## What this is not
 
 This project ships **no Andamiro content**. No official sprites, logos, fonts, songs,
-or step charts are included in this repository, and none will be accepted into it.
+or step charts are included in this repository or served from the deployed site, and
+none will be accepted into it. Publishing to the public web makes that rule sharper,
+not softer.
 
-Songs are supplied at runtime:
+Songs come from two places:
 
-- `songs/demo/` holds originally-authored charts over permissively-licensed audio, so
-  the game is playable immediately after install.
-- `songs/manifest.toml` names community charts that `tools/fetch_songs.py` downloads
-  from their creators' own distribution links into a gitignored cache. Third-party
-  audio and charts never enter this repository's history.
+- **Bundled** — originally-authored demo charts over permissively-licensed OGG audio,
+  packaged into the build so the site is playable the moment it loads.
+- **Fetched** — additional songs served as static files alongside the build and pulled
+  on demand when selected.
+
+## The browser is the target
+
+The only shipped artifact is the web build. Running natively is a development
+convenience — it iterates faster than a WASM rebuild — but **no timing decision is
+ever made outside the browser**, because that is the runtime players actually get.
+
+This shapes the code in three ways worth knowing before you read it:
+
+1. **The game loop is a coroutine.** pygbag drives frames from the browser's vsync,
+   and the Python side must yield with `await asyncio.sleep(0)` once per frame or the
+   tab hangs. `App.run` in [piu/app.py](piu/app.py) is async, and so is every screen.
+2. **Audio comes from the Web Audio API**, not a native library. `sounddevice` (CFFI →
+   PortAudio) and `miniaudio` (C extension) have no Emscripten build, so the song
+   clock reads `AudioContext.currentTime`. That is a better clock anyway: same
+   hardware source as the output, monotonic, and `outputLatency` gives the exact
+   correction a native stream-latency subtraction would.
+3. **Nothing audible happens before a user gesture.** Browsers refuse to start an
+   `AudioContext` otherwise, so the boot screen's click-to-start gate is load-bearing.
+
+The whole browser-facing surface is confined to [piu/runtime.py](piu/runtime.py),
+so pygbag's pre-1.0 API churn has a small blast radius.
 
 ## Setup
 
-Requires Python 3.12+. Everything runs inside a project-local virtual environment;
-nothing is installed globally.
+Requires Python 3.12 — the version pygbag's WASM runtime uses. Everything runs inside
+a project-local virtual environment; nothing is installed globally.
 
 **Windows (PowerShell)**
 
@@ -50,7 +73,6 @@ If activation is blocked: `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.
 **Linux (bash)**
 
 ```bash
-sudo apt install libsdl2-2.0-0 libportaudio2 python3-venv   # or your distro's equivalent
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
@@ -60,15 +82,24 @@ python -m pip install -e ".[dev]"
 ## Running
 
 ```bash
-python -m piu                    # boot to title
-python -m piu --song <folder>    # jump straight into a chart
-python -m piu --calibrate        # audio/input offset calibration
+# The real target: build and serve the WASM bundle at http://localhost:8000
+python -m pygbag main.py
+
+# Build only, without the test server
+python -m pygbag --build main.py
+
+# Native dev run — fast iteration, never used to judge timing
+python -m piu
 ```
+
+`pygbag.ini` controls what goes into the bundle. It exists because pygbag's built-in
+ignore list covers `/venv` but not `/.venv`; without it the entire virtualenv gets
+packaged.
 
 ## Default keyboard layout
 
 The five keys `W A S D X` form a plus, while the panels form an X, so the mapping is a
-single consistent 45° counter-clockwise rotation:
+single consistent 45° counter-clockwise rotation rather than five arbitrary choices:
 
 ```
    Panels                 Keys              Mapping
@@ -77,7 +108,7 @@ single consistent 45° counter-clockwise rotation:
   DL     DR                 X          S -> Center
 ```
 
-The numpad maps onto the X shape directly and ships as a second preset:
+The numpad already sits in an X and ships as a second preset:
 `7 = UL, 9 = UR, 5 = C, 1 = DL, 3 = DR`. In Double mode the left pad uses `WASDX` and
 the right pad uses the numpad.
 
@@ -87,6 +118,15 @@ the right pad uses the numpad.
 python -m pytest
 ```
 
-The engine core (`piu/core`, `piu/formats`, `piu/gameplay`) never imports pygame, so
-chart parsing, beat/time math, judgment, and scoring are all testable headlessly — no
-display and no audio device required. A test enforces this.
+The engine core — [piu/core](piu/core), [piu/formats](piu/formats),
+[piu/gameplay](piu/gameplay) — never imports pygame, so chart parsing, beat/time math,
+judgment, and scoring are all testable with no display and no audio device. A test
+enforces this, and it doubles as a WASM portability guard: that code is pure standard
+library and runs unchanged under Emscripten.
+
+## Deployment
+
+Pushing to `main` runs [the Pages workflow](.github/workflows/deploy-pages.yml): tests,
+then a pygbag build, then a check that the bundle contains no virtualenv or test files,
+then deploy. The WASM runtime itself is loaded from pygame-web's CDN rather than
+bundled, which is why the published artifact is measured in kilobytes.

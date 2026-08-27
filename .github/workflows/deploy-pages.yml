@@ -1,0 +1,85 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Never let two deploys race; a queued one supersedes the one in flight.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Headless tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: python -m pip install -e ".[dev]"
+      - name: Run tests
+        # SDL needs dummy drivers on a headless runner; the engine core
+        # itself needs neither, but the app-shell tests open a window.
+        env:
+          SDL_VIDEODRIVER: dummy
+          SDL_AUDIODRIVER: dummy
+        run: python -m pytest
+
+  build:
+    name: Build WASM bundle
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          # Matches pygbag's default WASM runtime (data-python="python3.12").
+          python-version: "3.12"
+      - name: Install pygbag
+        # Pinned: pygbag is pre-1.0 and its packaging behaviour moves.
+        run: python -m pip install "pygbag==0.9.3"
+      - name: Build
+        # --ume_block 0 disables pygbag's own click-to-start overlay; the
+        # game ships its own gesture gate in piu/screens/boot.py.
+        run: python -m pygbag --build --ume_block 0 main.py
+      - name: Verify the bundle excludes the virtualenv and tests
+        # pygbag's built-in ignore list covers /venv but not /.venv, so a
+        # broken pygbag.ini would silently ship the whole environment.
+        run: |
+          python - <<'PY'
+          import sys, zipfile, pathlib
+          apk = next(pathlib.Path("build/web").glob("*.apk"))
+          names = zipfile.ZipFile(apk).namelist()
+          leaked = [n for n in names
+                    if ".venv" in n or "site-packages" in n or "/tests/" in n]
+          size = apk.stat().st_size
+          print(f"{apk.name}: {len(names)} entries, {size:,} bytes")
+          if leaked:
+              print("LEAKED:", *leaked, sep="\n  ")
+              sys.exit(1)
+          if size > 25_000_000:
+              sys.exit(f"bundle too large: {size:,} bytes")
+          PY
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: build/web
+
+  deploy:
+    name: Deploy
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

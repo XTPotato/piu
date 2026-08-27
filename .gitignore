@@ -21,3 +21,6 @@ songs/*
 scores.db
 settings.toml
 .pytest_cache/
+
+# pygbag build cache and output
+build/web-cache/

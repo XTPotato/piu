@@ -5,20 +5,25 @@ build-backend = "hatchling.build"
 [project]
 name = "piu"
 version = "0.1.0"
-description = "A 5-panel upward-scrolling rhythm game in the style of Pump It Up"
+description = "A 5-panel upward-scrolling rhythm game in the style of Pump It Up, for the browser"
 readme = "README.md"
+# 3.12 is pygbag's default WASM runtime; matching it here keeps the local
+# venv and the shipped build on the same interpreter.
 requires-python = ">=3.12"
+# One runtime dependency on purpose. Everything else the game needs is
+# provided by the browser: audio decoding and the song clock come from the
+# Web Audio API, and persistence from localStorage. sounddevice (CFFI ->
+# PortAudio) and miniaudio (C extension) have no Emscripten build and were
+# dropped in the web pivot; numpy and platformdirs existed only to serve
+# them.
 dependencies = [
     "pygame-ce>=2.5",
-    "sounddevice>=0.4.7",
-    "miniaudio>=1.59",
-    "numpy>=1.26",
-    "platformdirs>=4.0",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
+    "pygbag>=0.9.3",
 ]
 
 [project.scripts]

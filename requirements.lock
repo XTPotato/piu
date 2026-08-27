@@ -1,13 +1,8 @@
-cffi==2.1.1
 colorama==0.4.6
 iniconfig==2.3.0
-miniaudio==1.71
-numpy==2.5.2
 packaging==26.3
-platformdirs==4.11.4
 pluggy==1.6.0
-pycparser==3.0
 pygame-ce==2.5.8
+pygbag==0.9.3
 Pygments==2.21.0
 pytest==9.1.1
-sounddevice==0.5.6
