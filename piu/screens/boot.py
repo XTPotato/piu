@@ -179,6 +179,9 @@ class PanelTestScreen(Screen):
             if event.key == pygame.K_t:
                 self._open_timing_check()
                 return
+            if event.key == pygame.K_p:
+                self._open_gameplay()
+                return
             column = self._bindings.get(event.key)
             if column is not None:
                 self._held.add(column)
@@ -186,6 +189,14 @@ class PanelTestScreen(Screen):
             column = self._bindings.get(event.key)
             if column is not None:
                 self._held.discard(column)
+
+    def _open_gameplay(self) -> None:
+        # Same reasoning as the timing screen below: gameplay drags in the
+        # audio clock and the note field, and neither should load until asked.
+        from piu.screens.gameplay import GameplayScreen
+
+        self._held.clear()
+        self.app.push(GameplayScreen(self.app))
 
     def _open_timing_check(self) -> None:
         # Imported here rather than at module scope: the timing screen pulls in
@@ -210,7 +221,7 @@ class PanelTestScreen(Screen):
         _centered(
             surface,
             "Hold the bound keys to light panels   |   TAB changes mode"
-            "   |   T timing check   |   ESC quits",
+            "   |   P play demo   |   T timing check   |   ESC quits",
             self._small,
             MUTED,
             110,

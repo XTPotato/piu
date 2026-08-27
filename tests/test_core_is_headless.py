@@ -1,6 +1,6 @@
 """Guards the rule that makes the engine core testable.
 
-`piu.core`, `piu.formats`, and `piu.gameplay` hold the timing math, chart
+`piu.core`, `piu.formats`, `piu.gameplay` and `piu.content` hold the timing math, chart
 parsing, judgment, and scoring - the parts that must be verifiable without a
 display or an audio device. If pygame ever leaks into them, that verifiability
 goes away quietly. This test makes it fail loudly instead.
@@ -11,7 +11,7 @@ from __future__ import annotations
 import subprocess
 import sys
 
-HEADLESS_PACKAGES = ("piu.core", "piu.formats", "piu.gameplay")
+HEADLESS_PACKAGES = ("piu.core", "piu.formats", "piu.gameplay", "piu.content")
 
 # Run in a subprocess: by the time this test executes, another test may already
 # have imported pygame, which would mask the leak in this interpreter.
