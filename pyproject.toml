@@ -1,0 +1,32 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "piu"
+version = "0.1.0"
+description = "A 5-panel upward-scrolling rhythm game in the style of Pump It Up"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "pygame-ce>=2.5",
+    "sounddevice>=0.4.7",
+    "miniaudio>=1.59",
+    "numpy>=1.26",
+    "platformdirs>=4.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+]
+
+[project.scripts]
+piu = "piu.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["piu"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

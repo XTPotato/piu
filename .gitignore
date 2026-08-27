@@ -1,0 +1,23 @@
+# --- Python virtual environment (never committed; recreate with `python -m venv .venv`) ---
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# --- Build output ---
+build/
+dist/
+*.spec.bak
+
+# --- User-supplied song content ---
+# Third-party audio and charts are fetched or dropped in by the user, never
+# committed. Only our originally-authored demo charts and the manifest are tracked.
+songs/*
+!songs/demo/
+!songs/manifest.toml
+
+# --- Runtime caches and per-user state ---
+.piu-cache/
+scores.db
+settings.toml
+.pytest_cache/
