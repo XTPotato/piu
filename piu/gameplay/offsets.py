@@ -15,8 +15,34 @@ This module must not import pygame.
 
 from __future__ import annotations
 
-import statistics
 from dataclasses import dataclass
+
+# The three statistics used here are computed locally rather than imported from
+# the stdlib's `statistics` module, which pygbag's trimmed CPython does not
+# ship - importing it fails at runtime in the browser with ModuleNotFoundError.
+# The arithmetic is four lines; the dependency was not worth the risk.
+# `math` is avoided for the same reason, hence ** 0.5 rather than sqrt.
+
+
+def _mean(values: list[float]) -> float:
+    return sum(values) / len(values)
+
+
+def _median(values: list[float]) -> float:
+    ordered = sorted(values)
+    middle = len(ordered) // 2
+    if len(ordered) % 2:
+        return ordered[middle]
+    return (ordered[middle - 1] + ordered[middle]) / 2.0
+
+
+def _stdev(values: list[float]) -> float:
+    """Sample standard deviation. Zero for fewer than two values."""
+    if len(values) < 2:
+        return 0.0
+    average = _mean(values)
+    variance = sum((v - average) ** 2 for v in values) / (len(values) - 1)
+    return variance ** 0.5
 
 #: Beyond this an input is assumed to belong to no click at all - a stray key
 #: press rather than a late attempt - and is discarded instead of poisoning the
@@ -119,10 +145,9 @@ def summarize(
 
     return OffsetStats(
         count=len(offsets),
-        mean=statistics.fmean(offsets),
-        median=statistics.median(offsets),
-        # A single sample has no spread; stdev would raise.
-        stdev=statistics.stdev(offsets) if len(offsets) > 1 else 0.0,
+        mean=_mean(offsets),
+        median=_median(offsets),
+        stdev=_stdev(offsets),
         minimum=min(offsets),
         maximum=max(offsets),
         unmatched_inputs=unmatched_inputs,
