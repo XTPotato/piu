@@ -13,8 +13,23 @@ Keep this file thin. Everything real lives in the ``piu`` package so it stays
 importable by the test suite, which never touches this module.
 """
 
+# /// script
+# dependencies = ["pygame-ce"]
+# ///
+
 import asyncio
 import sys
+
+# This import looks unused, and it is not. pygbag decides which packages to
+# install by statically parsing THIS file's imports (aio.pep0723.check_list ->
+# parse_code, given main.py's source). An import of pygame nested inside
+# piu/app.py is invisible to that scan, so pygame is never installed and the
+# module resolves to an empty stub - which surfaces much later and very
+# confusingly as "module 'pygame' has no attribute 'init'".
+#
+# Any third-party package the game needs at runtime must be imported here, at
+# top level, for the same reason. tests/test_entrypoint.py enforces it.
+import pygame  # noqa: F401
 
 
 def _bootstrap_failure(context: str, error: BaseException) -> None:
