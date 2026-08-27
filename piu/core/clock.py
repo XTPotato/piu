@@ -19,12 +19,69 @@ for tests, which is where all the arithmetic below is actually verified.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 
 from piu import runtime
 
 
 class ClockError(RuntimeError):
     """Raised when a clock cannot be prepared or started."""
+
+
+@dataclass(frozen=True, slots=True)
+class ClockQuality:
+    """How finely the song clock advances - the machine's own timing floor.
+
+    Measured without a human in the loop, which is the point: a tapping test
+    reports player jitter and machine jitter added together, and the player's
+    is the larger term. This isolates the part that no amount of practice can
+    improve.
+    """
+
+    reads: int
+    updates: int
+    min_step: float
+    max_step: float
+    span: float
+
+    @property
+    def quantisation(self) -> float:
+        """Worst-case error the clock's step size contributes, in seconds.
+
+        A reading can be stale by up to one whole step, so the largest observed
+        step is the error bound.
+        """
+        return self.max_step
+
+    def describe(self) -> str:
+        if not self.updates:
+            return "clock did not advance across {} reads in {:.0f}ms".format(
+                self.reads, self.span * 1000.0
+            )
+        return (
+            "clock steps {:.2f}-{:.2f}ms ({} updates in {:.0f}ms over {} reads); "
+            "worst-case quantisation {:.2f}ms".format(
+                self.min_step * 1000.0,
+                self.max_step * 1000.0,
+                self.updates,
+                self.span * 1000.0,
+                self.reads,
+                self.quantisation * 1000.0,
+            )
+        )
+
+    def verdict(self, perfect_window: float) -> str:
+        """Plain-language reading of the step size against a judgement window."""
+        if not self.updates:
+            return "unusable - the clock does not advance"
+        ratio = self.quantisation / perfect_window
+        if ratio < 0.1:
+            return "excellent - negligible against the Perfect window"
+        if ratio < 0.25:
+            return "good - a small fraction of the Perfect window"
+        if ratio < 0.5:
+            return "marginal - a noticeable share of the Perfect window"
+        return "poor - the clock alone consumes most of the Perfect window"
 
 
 class SongClock(ABC):
@@ -258,3 +315,23 @@ class WebAudioClock(SongClock):
     @offset.setter
     def offset(self, value: float) -> None:
         self._offset = float(value)
+
+    def probe_granularity(self, duration_ms: int = 60) -> ClockQuality:
+        """Measure the clock's own step size.
+
+        A tapping test cannot separate the player's jitter from the machine's,
+        and the player's is the larger of the two. This measures the machine's
+        floor directly: the clock advances in steps, and that step is
+        quantisation present in every judgement regardless of how well anyone
+        plays.
+        """
+        reads, updates, min_step, max_step, span = (
+            float(value) for value in self._bridge.probeClock(int(duration_ms))
+        )
+        return ClockQuality(
+            reads=int(reads),
+            updates=int(updates),
+            min_step=min_step,
+            max_step=max_step,
+            span=span,
+        )

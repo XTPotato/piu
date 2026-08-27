@@ -750,6 +750,50 @@
       return this.ctx ? this.ctx.currentTime : 0;
     },
 
+    /* Measure how finely AudioContext.currentTime advances.
+     *
+     * A tapping test measures human jitter and machine jitter added together,
+     * and the human dominates. This isolates the machine's floor: currentTime
+     * does not advance continuously, it steps, and that step size is
+     * quantisation injected into every judgement no matter how precisely the
+     * player performs.
+     *
+     * Deliberately a blocking sample loop. Spreading the reads across frames
+     * would measure the frame rate instead of the clock, which is the very
+     * confusion this exists to remove. A few tens of milliseconds of blocking
+     * during a diagnostic is a fair price.
+     *
+     * Returns [reads, updates, minStep, maxStep, spanSeconds]; flat, because
+     * arrays of numbers cross the pygbag bridge predictably. */
+    probeClock: function (durationMs) {
+      if (!this.ctx) return [0, 0, 0, 0, 0];
+      durationMs = durationMs || 60;
+
+      var startedAt = performance.now();
+      var last = this.ctx.currentTime;
+      var minStep = Infinity;
+      var maxStep = 0;
+      var updates = 0;
+      var reads = 0;
+
+      while (performance.now() - startedAt < durationMs) {
+        reads += 1;
+        var now = this.ctx.currentTime;
+        if (now !== last) {
+          var step = now - last;
+          if (step > 0) {
+            if (step < minStep) minStep = step;
+            if (step > maxStep) maxStep = step;
+            updates += 1;
+          }
+          last = now;
+        }
+      }
+
+      var span = (performance.now() - startedAt) / 1000;
+      return [reads, updates, minStep === Infinity ? 0 : minStep, maxStep, span];
+    },
+
     duration: function () {
       return this.buffer ? this.buffer.duration : 0;
     },

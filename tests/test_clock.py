@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from piu.core.clock import ClockError, ManualClock, WebAudioClock
+from piu.core.clock import ClockError, ClockQuality, ManualClock, WebAudioClock
 from piu.gameplay import offsets
 
 
@@ -309,3 +309,53 @@ class TestPickup:
 
         stats = offsets.summarize(matched, len(unmatched), len(missed))
         assert stats.mean == pytest.approx(0.008)
+
+
+class TestClockQuality:
+    """Reporting on the machine's own timing floor.
+
+    The measurement itself needs a browser, but how the numbers are turned
+    into a judgement is arithmetic and belongs under test.
+    """
+
+    PERFECT = 0.042
+
+    def make(self, max_step: float, updates: int = 100) -> ClockQuality:
+        return ClockQuality(
+            reads=10000, updates=updates, min_step=max_step * 0.8,
+            max_step=max_step, span=0.06,
+        )
+
+    def test_quantisation_is_the_worst_observed_step(self) -> None:
+        # A reading can be stale by a whole step, so the largest step is the
+        # error bound, not the average.
+        assert self.make(0.003).quantisation == pytest.approx(0.003)
+
+    def test_a_fine_clock_is_excellent(self) -> None:
+        # One render quantum at 48kHz is about 2.7ms.
+        assert "excellent" in self.make(0.0027).verdict(self.PERFECT)
+
+    def test_a_coarse_clock_is_called_out(self) -> None:
+        assert "poor" in self.make(0.030).verdict(self.PERFECT)
+
+    def test_a_frame_quantised_clock_is_marginal_or_worse(self) -> None:
+        # If the clock only advanced once per 60Hz frame it would contribute
+        # 16.7ms on its own - most of a Perfect window.
+        verdict = self.make(0.0167).verdict(self.PERFECT)
+        assert "marginal" in verdict or "poor" in verdict
+
+    def test_a_stalled_clock_is_unusable(self) -> None:
+        stalled = ClockQuality(reads=10000, updates=0, min_step=0.0,
+                               max_step=0.0, span=0.06)
+        assert "unusable" in stalled.verdict(self.PERFECT)
+        assert "did not advance" in stalled.describe()
+
+    def test_describe_reports_milliseconds(self) -> None:
+        text = self.make(0.0027).describe()
+        assert "ms" in text and "quantisation" in text
+
+    def test_verdict_scales_with_the_window(self) -> None:
+        # The same clock is judged more harshly against a tighter window.
+        clock = self.make(0.008)
+        assert "good" in clock.verdict(0.042)
+        assert "poor" in clock.verdict(0.012)

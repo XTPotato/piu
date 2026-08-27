@@ -84,6 +84,7 @@ class TimingCheckScreen(Screen):
         self.first_beat = LEAD_IN + PICKUP_BEATS * BEAT_PERIOD
         self.expected = [self.first_beat + i * BEAT_PERIOD for i in range(BEATS)]
         self.ambiguous = False
+        self.clock_quality = None
         self.taps: list[float] = []
         self.stats = offsets.summarize([])
         self.verdict: offsets.Verdict | None = None
@@ -122,6 +123,17 @@ class TimingCheckScreen(Screen):
             "context {} @ {:g}Hz, reported latency {:.1f}ms".format(
                 PICKUP_BEATS, BEATS, BPM, self.clock.context_state,
                 self.clock.sample_rate, self.clock.latency * 1000.0,
+            ),
+        )
+
+        # Measured before anything else, so the machine's own timing floor is
+        # on record independently of how well anyone taps.
+        quality = self.clock.probe_granularity()
+        self.clock_quality = quality
+        runtime.log(
+            "OK" if quality.updates else "FAIL",
+            "clock quality: {} - {}".format(
+                quality.describe(), quality.verdict(PERFECT_WINDOW)
             ),
         )
 
@@ -305,6 +317,15 @@ class TimingCheckScreen(Screen):
         self._draw_scatter(surface, centre, 250)
 
         line(self.stats.describe(), self._mono, TEXT, 350)
+        if self.clock_quality is not None and self.clock_quality.updates:
+            line(
+                "clock floor {:.2f}ms   |   measured spread {:.1f}ms".format(
+                    self.clock_quality.quantisation * 1000.0,
+                    self.stats.stdev * 1000.0,
+                ),
+                self._small, MUTED, 410,
+            )
+
         line(
             "taps {}   unmatched {}   missed clicks {}".format(
                 len(self.taps), self.stats.unmatched_inputs, self.stats.missed_expected
