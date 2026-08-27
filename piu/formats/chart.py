@@ -56,13 +56,15 @@ _MODE_COLUMNS: dict[PlayMode, int] = {
 }
 
 
-def panel_for_column(column: int, mode: PlayMode) -> Panel:
-    """Map a chart column onto the physical panel it lands on.
+#: Half-double occupies the middle six panels of a ten-panel setup - that is,
+#: physical indices 2 through 7 - so its columns sit two to the right of a
+#: plain double chart's.
+HALF_DOUBLE_OFFSET = 2
 
-    Half-double occupies the middle six panels of a ten-panel setup, so its
-    columns are offset by three relative to a plain double chart.
-    """
-    index = column + 3 if mode is PlayMode.HALF_DOUBLE else column
+
+def panel_for_column(column: int, mode: PlayMode) -> Panel:
+    """Map a chart column onto the physical panel it lands on."""
+    index = column + HALF_DOUBLE_OFFSET if mode is PlayMode.HALF_DOUBLE else column
     return Panel(index % 5)
 
 
