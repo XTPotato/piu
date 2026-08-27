@@ -36,6 +36,53 @@
     return (n / 1048576).toFixed(2) + " MB";
   }
 
+  /* Where a request came from. A diagnostic log is only useful if a FAIL
+   * means something is actually wrong with the game, so requests that are
+   * neither ours nor the runtime's are labelled and kept out of the failure
+   * count. Browser extensions inject into the page and their failures are
+   * not ours to fix. */
+  var RUNTIME_HOSTS = ["pygame-web.github.io"];
+
+  /* Resources known to be absent upstream. Their failure is expected and must
+   * not read as a fault in the game. */
+  var OPTIONAL = [/browserfs\.min\.js(\?|$)/];
+
+  function host(url) {
+    try {
+      return new URL(url, location.href).host;
+    } catch (e) {
+      return "";
+    }
+  }
+
+  function origin(url) {
+    var h = host(url);
+    if (!h || h === location.host) return "app";
+    if (RUNTIME_HOSTS.indexOf(h) >= 0) return "runtime";
+    return "foreign";
+  }
+
+  function isOptional(url) {
+    for (var i = 0; i < OPTIONAL.length; i++) {
+      if (OPTIONAL[i].test(url)) return true;
+    }
+    return false;
+  }
+
+  /* Third-party code identifies itself through the stack, not the URL being
+   * requested, so rejections get classified by where the caller lives. */
+  function stackIsForeign(stack) {
+    if (!stack) return false;
+    var urls = String(stack).match(/https?:\/\/[^\s):]+/g) || [];
+    var sawForeign = false;
+    for (var i = 0; i < urls.length; i++) {
+      if (origin(urls[i]) === "foreign") sawForeign = true;
+    }
+    return sawForeign;
+  }
+
+  var FOREIGN = 0;
+
   function log(kind, message, detail) {
     var text = elapsed() + "  " + kind.padEnd(5) + "  " + message;
     if (detail) text += "\n" + String(detail).replace(/^/gm, " ".repeat(20));
@@ -51,6 +98,8 @@
     if (kind === "FAIL") {
       FAILED += 1;
       show();
+    } else if (kind === "OTHER") {
+      FOREIGN += 1;
     }
     render();
   }
@@ -156,7 +205,8 @@
     if (summary) {
       summary.textContent =
         "piu boot log - " + LINES.length + " events, " + PENDING +
-        " in flight, " + FAILED + " failed";
+        " in flight, " + FAILED + " failed" +
+        (FOREIGN ? ", " + FOREIGN + " third-party (not the game)" : "");
     }
   }
 
@@ -217,10 +267,23 @@
         .catch(function (error) {
           PENDING -= 1;
           var ms = Math.round(performance.now() - started);
+          var foreign =
+            origin(url) === "foreign" ||
+            stackIsForeign(error && error.stack);
+
           // This is the case the browser normally reports as a bare
-          // "Failed to fetch" with no URL. Now it has one.
-          log("FAIL", "network error after " + ms + "ms: " + url, error && (error.stack || error.message));
-          log("HINT", hintForNetworkError(url));
+          // "Failed to fetch" with no URL. Now it has one - and it says
+          // whether the request was even ours.
+          if (foreign) {
+            log(
+              "OTHER",
+              "third-party request failed after " + ms + "ms: " + url +
+                "  (not the game - injected by an extension or embedded script)"
+            );
+          } else {
+            log("FAIL", "network error after " + ms + "ms: " + url, error && (error.stack || error.message));
+            log("HINT", hintForNetworkError(url));
+          }
           throw error;
         });
     };
@@ -311,9 +374,19 @@
       // which do not bubble and are invisible to window.onerror.
       var target = event.target;
       if (target && target !== window && (target.src || target.href)) {
-        log("FAIL", "resource failed to load: " + (target.src || target.href));
-        log("HINT", "A <" + String(target.tagName).toLowerCase() + "> tag could " +
-          "not be fetched. If it is optional the app may still run.");
+        var url = target.src || target.href;
+        var tag = String(target.tagName).toLowerCase();
+        if (isOptional(url)) {
+          // Expected upstream gap. Logging this as FAIL would teach the
+          // reader to skim past failures, which defeats the whole panel.
+          log("WARN", "optional resource unavailable: " + url);
+        } else if (origin(url) === "foreign") {
+          log("OTHER", "third-party <" + tag + "> failed to load: " + url);
+        } else {
+          log("FAIL", "resource failed to load: " + url);
+          log("HINT", "A <" + tag + "> tag could not be fetched. If it is " +
+            "optional the app may still run.");
+        }
         return;
       }
       log(
@@ -330,6 +403,16 @@
     var reason = event.reason;
     var message =
       (reason && (reason.message || reason.toString())) || "(no reason given)";
+
+    if (stackIsForeign(reason && reason.stack)) {
+      // Raised inside injected third-party code. Reporting it as a game
+      // failure sends whoever reads this log hunting in the wrong codebase -
+      // which is exactly what happened the first time this page was debugged.
+      log("OTHER", "third-party promise rejection: " + message +
+        "  (not the game - injected by an extension or embedded script)");
+      return;
+    }
+
     log("FAIL", "unhandled promise rejection: " + message, reason && reason.stack);
     if (String(message).indexOf("Failed to fetch") >= 0) {
       log(
