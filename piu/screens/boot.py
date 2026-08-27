@@ -117,11 +117,9 @@ class BootScreen(Screen):
         self._elapsed += dt
         # App tracks the gesture globally, so any key, click, or tap counts.
         if self.app.user_gesture:
-            await self.exit()
+            # The app loop runs the exit/enter hooks once this frame settles.
             self.app.pop()
-            panel_test = PanelTestScreen(self.app)
-            self.app.push(panel_test)
-            await panel_test.enter()
+            self.app.push(PanelTestScreen(self.app))
 
     async def draw(self, surface: pygame.Surface) -> None:
         surface.fill(BACKGROUND)
@@ -178,6 +176,9 @@ class PanelTestScreen(Screen):
             if event.key == pygame.K_TAB:
                 self._cycle_mode()
                 return
+            if event.key == pygame.K_t:
+                self._open_timing_check()
+                return
             column = self._bindings.get(event.key)
             if column is not None:
                 self._held.add(column)
@@ -185,6 +186,14 @@ class PanelTestScreen(Screen):
             column = self._bindings.get(event.key)
             if column is not None:
                 self._held.discard(column)
+
+    def _open_timing_check(self) -> None:
+        # Imported here rather than at module scope: the timing screen pulls in
+        # the audio clock, and nothing should be loaded until it is asked for.
+        from piu.screens.timing_check import TimingCheckScreen
+
+        self._held.clear()
+        self.app.push(TimingCheckScreen(self.app))
 
     def _cycle_mode(self) -> None:
         order = [PlayMode.SINGLE, PlayMode.HALF_DOUBLE, PlayMode.DOUBLE]
@@ -201,7 +210,7 @@ class PanelTestScreen(Screen):
         _centered(
             surface,
             "Hold the bound keys to light panels   |   TAB changes mode"
-            "   |   ESC quits",
+            "   |   T timing check   |   ESC quits",
             self._small,
             MUTED,
             110,

@@ -61,6 +61,8 @@ class App:
         self.running = False
         self.surface: pygame.Surface | None = None
         self.clock: pygame.time.Clock | None = None
+        self._pending_enter: list[Screen] = []
+        self._pending_exit: list[Screen] = []
         #: Set once the player has interacted. Browsers refuse to start an
         #: AudioContext before a real user gesture, so nothing audible may be
         #: attempted until this is True.
@@ -77,10 +79,30 @@ class App:
         self.clock = pygame.time.Clock()
 
     def push(self, screen: Screen) -> None:
+        """Put ``screen`` on top of the stack.
+
+        ``enter`` is a coroutine but screens are usually pushed from a
+        synchronous event handler, so it is queued and awaited by the loop
+        before the screen's first update rather than being awaited here.
+        """
         self.screen_stack.append(screen)
+        self._pending_enter.append(screen)
 
     def pop(self) -> Screen | None:
-        return self.screen_stack.pop() if self.screen_stack else None
+        """Remove the top screen, queuing its ``exit`` for the loop to await."""
+        if not self.screen_stack:
+            return None
+        screen = self.screen_stack.pop()
+        self._pending_exit.append(screen)
+        return screen
+
+    async def _settle_transitions(self) -> None:
+        """Run queued enter/exit hooks. Exits first, so a swap tears down
+        before the replacement sets up."""
+        while self._pending_exit:
+            await self._pending_exit.pop(0).exit()
+        while self._pending_enter:
+            await self._pending_enter.pop(0).enter()
 
     @property
     def top(self) -> Screen | None:
@@ -101,7 +123,6 @@ class App:
 
         if initial is not None:
             self.push(initial)
-            await initial.enter()
 
         self.running = True
         frames = 0
@@ -109,12 +130,18 @@ class App:
             dt = self._tick()
             self._pump_events()
 
+            # Event handlers may have pushed or popped; settle that before
+            # anyone updates, so a screen never updates before it has entered.
+            await self._settle_transitions()
+
             top = self.top
             if top is None:
                 self.running = False
                 break
 
             await top.update(dt)
+            # update() can transition too - a boot screen advancing, say.
+            await self._settle_transitions()
             await self._draw()
 
             pygame.display.flip()

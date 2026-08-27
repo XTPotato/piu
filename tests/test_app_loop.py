@@ -252,3 +252,83 @@ print("OK", len(codes))
         # back. Keeping them as names is the fix, so assert the shape.
         assert all(isinstance(v, str) for v in KEY_CONSTANT_NAMES.values())
         assert KEY_CONSTANT_NAMES["a"] == "K_a"
+
+
+class TestScreenTransitions:
+    """Screens are pushed from synchronous event handlers.
+
+    enter() and exit() are coroutines, so the loop queues and awaits them
+    rather than the caller. The invariant that matters: a screen must never
+    receive update() before its enter() has run.
+    """
+
+    def test_push_queues_enter_and_the_loop_runs_it(self, app: App) -> None:
+        events: list[str] = []
+
+        class Tracked(Screen):
+            async def enter(self) -> None:
+                events.append("enter")
+
+            async def update(self, dt: float) -> None:
+                events.append("update")
+                self.app.quit()
+
+        asyncio.run(app.run(Tracked(app)))
+        assert events == ["enter", "update"], events
+
+    def test_pop_queues_exit(self, app: App) -> None:
+        events: list[str] = []
+
+        class Leaving(Screen):
+            async def exit(self) -> None:
+                events.append("exit")
+
+            async def update(self, dt: float) -> None:
+                self.app.pop()
+
+        asyncio.run(app.run(Leaving(app)))
+        assert events == ["exit"]
+
+    def test_a_swap_tears_down_before_setting_up(self, app: App) -> None:
+        events: list[str] = []
+
+        class Second(Screen):
+            async def enter(self) -> None:
+                events.append("second.enter")
+
+            async def update(self, dt: float) -> None:
+                self.app.quit()
+
+        class First(Screen):
+            async def exit(self) -> None:
+                events.append("first.exit")
+
+            async def update(self, dt: float) -> None:
+                self.app.pop()
+                self.app.push(Second(self.app))
+
+        asyncio.run(app.run(First(app)))
+        assert events == ["first.exit", "second.enter"], events
+
+    def test_screen_pushed_from_an_event_handler_gets_entered(self, app: App) -> None:
+        entered: list[str] = []
+
+        class Pushed(Screen):
+            async def enter(self) -> None:
+                entered.append("yes")
+
+            async def update(self, dt: float) -> None:
+                self.app.quit()
+
+        class Host(Screen):
+            def handle_event(self, event: pygame.event.Event) -> None:
+                # Synchronous, exactly like the real key handlers.
+                self.app.push(Pushed(self.app))
+
+            async def update(self, dt: float) -> None:
+                pass
+
+        app.push(Host(app))
+        pygame.event.post(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_t))
+        asyncio.run(app.run())
+        assert entered == ["yes"]
