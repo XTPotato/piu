@@ -1,0 +1,33 @@
+#VERSION:0.83;
+#TITLE:SSC Song;
+#ARTIST:SSC Artist;
+#MUSIC:ssc.ogg;
+#OFFSET:0.000;
+#BPMS:0.000=100.000;
+
+// Chart-level BPMS overrides the song's 100 for this chart only.
+#NOTEDATA:;
+#STEPSTYPE:pump-double;
+#DESCRIPTION:Doubles Charter;
+#DIFFICULTY:Crazy;
+#METER:21;
+#BPMS:0.000=120.000;
+#NOTES:
+1000000000
+0000000000
+0000000001
+0000000000
+;
+
+// This chart states no timing, so it inherits the song's 100 BPM.
+#NOTEDATA:;
+#STEPSTYPE:pump-single;
+#DESCRIPTION:Single Charter;
+#DIFFICULTY:Normal;
+#METER:12;
+#NOTES:
+10000
+00000
+00000
+00000
+;

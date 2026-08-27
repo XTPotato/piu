@@ -1,0 +1,46 @@
+#TITLE:Test Song;
+#ARTIST:Test Artist;
+#MUSIC:song.ogg;
+#BANNER:banner.png;
+#OFFSET:-0.500;
+#SAMPLESTART:32.000;
+#SAMPLELENGTH:15.000;
+#BPMS:0.000=120.000,
+4.000=240.000;
+#STOPS:8.000=0.500;
+
+// A pump chart, which should load.
+#NOTES:
+     pump-single:
+     Test Charter:
+     Hard:
+     17:
+     0,0,0,0,0:
+10000
+00000
+00100
+00000
+,
+20000
+00000
+30000
+00000
+,
+00M00
+00000
+00000
+00000
+;
+
+// A dance chart, which should be skipped entirely.
+#NOTES:
+     dance-single:
+     Ignored:
+     Hard:
+     9:
+     0,0,0,0,0:
+1000
+0000
+0000
+0000
+;
