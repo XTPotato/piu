@@ -134,6 +134,39 @@ def match_inputs(
     return offsets, unmatched, missed
 
 
+#: Fraction of a half-beat beyond which a measurement is treated as ambiguous.
+#: Well below 1.0, because confidence should degrade before the exact boundary
+#: rather than at it.
+AMBIGUITY_FRACTION = 0.6
+
+
+def is_ambiguous(stats: OffsetStats, period: float) -> bool:
+    """Whether the run sits too close to the half-beat boundary to be trusted.
+
+    This is aliasing, and it is worth being precise about why it cannot simply
+    be corrected. Nearest-neighbour matching always pairs a tap with the
+    closest click, so it can never report an offset larger than half a beat. A
+    player who is 300ms late on a 500ms beat produces *exactly the same* tap
+    pattern as one who is 200ms early. Not similar - identical. No amount of
+    analysis recovers which happened, because the information is not in the
+    data.
+
+    What makes that dangerous rather than merely imprecise is how it presents:
+    a consistent late player is reported as a consistent early one, with near
+    zero standard deviation. It looks like the best possible result, passes the
+    gate, and yields a calibration offset of the wrong sign.
+
+    So rather than guess a direction, the measurement is declared unusable when
+    it lands near the boundary. An offset that large is implausible for someone
+    genuinely trying to tap along, which makes "run it again with the count-in"
+    both the safe answer and the likely correct one.
+    """
+    if stats.count == 0 or period <= 0.0:
+        return False
+    half_beat = period / 2.0
+    return abs(stats.median) > half_beat * AMBIGUITY_FRACTION
+
+
 def summarize(
     offsets: list[float],
     unmatched_inputs: int = 0,
@@ -159,6 +192,7 @@ def evaluate(
     stats: OffsetStats,
     perfect_window: float,
     minimum_samples: int = 16,
+    ambiguous: bool = False,
 ) -> Verdict:
     """Decide whether measured timing clears the W1 gate.
 
@@ -167,6 +201,16 @@ def evaluate(
     consistent bias is precisely what the calibration offset subtracts. The
     spread is the real test, because nothing downstream can remove it.
     """
+    # Checked before anything else: an aliased run produces numbers that look
+    # excellent, so trusting them would be the worst outcome available.
+    if ambiguous:
+        return Verdict(
+            False,
+            "offsets are near half a beat, where a late tap and an early one "
+            "are indistinguishable - the sign here may be inverted. Use the "
+            "count-in to lock onto the tempo and run it again.",
+        )
+
     if stats.count < minimum_samples:
         return Verdict(
             False,

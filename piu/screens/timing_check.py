@@ -42,6 +42,14 @@ BEATS = 32
 LEAD_IN = 2.0
 ACCENT_EVERY = 4
 
+#: Unmeasured count-in clicks before measurement starts. Without them there is
+#: nothing to lock onto, the first beat is missed or badly lagged, and a
+#: sufficiently late first tap drags the whole run onto the following clicks -
+#: which reports a tight offset of the wrong sign rather than an obvious error.
+PICKUP_BEATS = 4
+
+BEAT_PERIOD = 60.0 / BPM
+
 #: Matches the default ruleset's Perfect half-window.
 PERFECT_WINDOW = 0.042
 
@@ -72,7 +80,10 @@ class TimingCheckScreen(Screen):
         self.status = "starting"
         self.detail = ""
 
-        self.expected = [LEAD_IN + i * (60.0 / BPM) for i in range(BEATS)]
+        # Measured beats only. The pickup clicks sound but are never matched.
+        self.first_beat = LEAD_IN + PICKUP_BEATS * BEAT_PERIOD
+        self.expected = [self.first_beat + i * BEAT_PERIOD for i in range(BEATS)]
+        self.ambiguous = False
         self.taps: list[float] = []
         self.stats = offsets.summarize([])
         self.verdict: offsets.Verdict | None = None
@@ -107,14 +118,16 @@ class TimingCheckScreen(Screen):
 
         runtime.log(
             "BOOT",
-            "timing check: building {} beats at {:g} BPM, context {} @ {:g}Hz, "
-            "reported latency {:.1f}ms".format(
-                BEATS, BPM, self.clock.context_state,
+            "timing check: building {} pickup + {} measured beats at {:g} BPM, "
+            "context {} @ {:g}Hz, reported latency {:.1f}ms".format(
+                PICKUP_BEATS, BEATS, BPM, self.clock.context_state,
                 self.clock.sample_rate, self.clock.latency * 1000.0,
             ),
         )
 
-        if not self.clock.load_click_track(BPM, BEATS, LEAD_IN, ACCENT_EVERY):
+        if not self.clock.load_click_track(
+            BPM, BEATS, LEAD_IN, ACCENT_EVERY, PICKUP_BEATS
+        ):
             self.status = "error"
             self.detail = self.clock.last_error or "click track generation failed"
             return
@@ -191,13 +204,16 @@ class TimingCheckScreen(Screen):
     def _recompute(self) -> None:
         matched, unmatched, missed = offsets.match_inputs(self.taps, self.expected)
         self.stats = offsets.summarize(matched, len(unmatched), len(missed))
+        self.ambiguous = offsets.is_ambiguous(self.stats, BEAT_PERIOD)
 
     def _finish(self) -> None:
         assert self.clock is not None
         self.clock.stop()
         self.status = "done"
         self._recompute()
-        self.verdict = offsets.evaluate(self.stats, PERFECT_WINDOW)
+        self.verdict = offsets.evaluate(
+            self.stats, PERFECT_WINDOW, ambiguous=self.ambiguous
+        )
 
         if self._reported:
             return
@@ -210,6 +226,15 @@ class TimingCheckScreen(Screen):
             ),
         )
         runtime.log("BOOT", "timing gate reason: {}".format(self.verdict.reason))
+        if self.ambiguous:
+            runtime.log(
+                "WARN",
+                "offsets sit near half a beat ({:.0f}ms of a {:.0f}ms beat), "
+                "where late and early are indistinguishable - the sign above "
+                "may be inverted".format(
+                    abs(self.stats.median) * 1000.0, BEAT_PERIOD * 1000.0
+                ),
+            )
         runtime.log(
             "BOOT",
             "suggested calibration offset: {:+.1f}ms  "
@@ -248,18 +273,30 @@ class TimingCheckScreen(Screen):
         if self.status in ("starting", "ready"):
             line("Tap along with the click on every beat.", self._body, TEXT, 130)
             line(
-                "Any of space, WASDX, or the numpad counts.",
+                "Four low count-in clicks first - do not tap those. Measuring "
+                "starts on the high click.",
                 self._small, MUTED, 168,
+            )
+            line(
+                "Any of space, WASDX, or the numpad counts.",
+                self._small, MUTED, 194,
             )
             line("ENTER to start      ESC to go back", self._body, ACCENT, 220)
             return
 
         # Running or done.
         position = self.clock.position() if self.clock else 0.0
-        if self.status == "running" and position < 0:
-            line("Get ready...", self._body, TEXT, 130)
+        if self.status == "running" and position < self.first_beat:
+            remaining = int((self.first_beat - position) / BEAT_PERIOD) + 1
+            if position < LEAD_IN:
+                line("Get ready...", self._body, TEXT, 130)
+            else:
+                # Count down the pickup clicks so the first measured beat is
+                # anticipated rather than reacted to.
+                line(str(min(remaining, PICKUP_BEATS)), self._title, ACCENT, 130)
+                line("count-in", self._small, MUTED, 166)
         else:
-            beat = max(0, int((position - LEAD_IN) / (60.0 / BPM)) + 1)
+            beat = max(0, int((position - self.first_beat) / BEAT_PERIOD) + 1)
             line(
                 "Beat {} of {}".format(min(beat, BEATS), BEATS),
                 self._body, TEXT, 130,
@@ -274,6 +311,12 @@ class TimingCheckScreen(Screen):
             ),
             self._small, MUTED, 384,
         )
+
+        if self.ambiguous and self.status == "done":
+            line(
+                "Offsets are near half a beat - sign may be inverted, retry",
+                self._body, BAD, 412,
+            )
 
         if self.verdict is not None:
             color = GOOD if self.verdict.passed else BAD

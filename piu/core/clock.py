@@ -156,17 +156,28 @@ class WebAudioClock(SongClock):
         return bool(self._bridge.init())
 
     def load_click_track(
-        self, bpm: float, beats: int, lead_in: float = 1.0, accent_every: int = 4
+        self,
+        bpm: float,
+        beats: int,
+        lead_in: float = 1.0,
+        accent_every: int = 4,
+        pickup: int = 0,
     ) -> bool:
         """Synthesize a metronome track with clicks at exact beat positions.
 
         Used by the timing rig: the reference is arithmetic rather than decoded
         material, so any measured offset belongs to the pipeline rather than to
         the audio file.
+
+        ``pickup`` prepends that many unmeasured count-in clicks, pitched lower
+        so the change is audible. They give the player a tempo to lock onto
+        before anything is recorded.
         """
         return bool(
-            self._bridge.makeClickTrack(float(bpm), int(beats), float(lead_in),
-                                        int(accent_every))
+            self._bridge.makeClickTrack(
+                float(bpm), int(beats), float(lead_in), int(accent_every),
+                int(pickup),
+            )
         )
 
     def load_url(self, url: str) -> bool:

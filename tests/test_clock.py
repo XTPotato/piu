@@ -206,3 +206,106 @@ class TestGate:
         # One catastrophically late tap must not move the suggestion much.
         stats = offsets.summarize([0.020] * 10 + [0.500])
         assert offsets.suggest_calibration(stats) == pytest.approx(0.020)
+
+
+class TestAmbiguity:
+    """Guards against an aliased run reporting confident nonsense.
+
+    Nearest-neighbour matching can never report more than half a beat, so a
+    player 300ms late on a 500ms beat produces the same tap pattern as one
+    200ms early. The information to tell them apart is not in the data, so the
+    run is refused rather than guessed at.
+    """
+
+    PERIOD = 0.5  # 120 BPM
+    GRID = [i * 0.5 for i in range(24)]
+
+    def stats_for(self, delta: float) -> offsets.OffsetStats:
+        taps = [t + delta for t in self.GRID]
+        matched, unmatched, missed = offsets.match_inputs(taps, self.GRID)
+        return offsets.summarize(matched, len(unmatched), len(missed))
+
+    def test_tight_timing_is_not_ambiguous(self) -> None:
+        assert not offsets.is_ambiguous(self.stats_for(0.012), self.PERIOD)
+
+    def test_a_normal_calibration_bias_is_not_ambiguous(self) -> None:
+        # 40ms late is a plausible, correctable bias and must stay usable.
+        assert not offsets.is_ambiguous(self.stats_for(0.040), self.PERIOD)
+
+    def test_near_half_a_beat_is_ambiguous(self) -> None:
+        # The reported case: no count-in, player lags badly, every tap slips
+        # onto the following click.
+        assert offsets.is_ambiguous(self.stats_for(0.30), self.PERIOD)
+
+    def test_ambiguity_is_symmetric(self) -> None:
+        assert offsets.is_ambiguous(self.stats_for(-0.30), self.PERIOD)
+
+    def test_empty_run_is_not_ambiguous(self) -> None:
+        assert not offsets.is_ambiguous(offsets.summarize([]), self.PERIOD)
+
+    def test_zero_period_is_handled(self) -> None:
+        assert not offsets.is_ambiguous(self.stats_for(0.012), 0.0)
+
+    def test_ambiguous_run_fails_the_gate_despite_looking_perfect(self) -> None:
+        # The dangerous case. Without the check this passes with a tight
+        # spread and hands back a calibration of the wrong sign.
+        stats = self.stats_for(0.30)
+        assert stats.stdev == pytest.approx(0.0, abs=1e-9)
+        assert offsets.evaluate(stats, 0.042).passed, (
+            "precondition: unchecked, an aliased run passes the gate"
+        )
+
+        verdict = offsets.evaluate(
+            stats, 0.042, ambiguous=offsets.is_ambiguous(stats, self.PERIOD)
+        )
+        assert not verdict.passed
+        assert "half a beat" in verdict.reason
+
+    def test_scales_with_tempo(self) -> None:
+        # At 240 BPM the beat is 250ms, so the same 100ms offset that is fine
+        # at 120 BPM becomes ambiguous.
+        fast_period = 0.25
+        grid = [i * fast_period for i in range(24)]
+        taps = [t + 0.100 for t in grid]
+        matched, unmatched, missed = offsets.match_inputs(taps, grid)
+        stats = offsets.summarize(matched, len(unmatched), len(missed))
+        assert offsets.is_ambiguous(stats, fast_period)
+        assert not offsets.is_ambiguous(self.stats_for(0.100), self.PERIOD)
+
+
+class TestPickup:
+    """The count-in clicks sound but are never measured."""
+
+    BPM = 120.0
+    LEAD_IN = 2.0
+    PICKUP = 4
+    BEATS = 8
+
+    def expected(self) -> list[float]:
+        period = 60.0 / self.BPM
+        first = self.LEAD_IN + self.PICKUP * period
+        return [first + i * period for i in range(self.BEATS)]
+
+    def test_measurement_starts_after_the_pickup(self) -> None:
+        expected = self.expected()
+        assert expected[0] == pytest.approx(4.0)
+        assert len(expected) == self.BEATS
+
+    def test_tapping_the_pickup_does_not_corrupt_the_run(self) -> None:
+        # A player who taps along with the count-in produces four extra taps
+        # before the first measured beat. They must be reported as unmatched
+        # rather than absorbed into the measured window.
+        period = 60.0 / self.BPM
+        expected = self.expected()
+        pickup_taps = [self.LEAD_IN + i * period for i in range(self.PICKUP)]
+        good_taps = [t + 0.008 for t in expected]
+
+        matched, unmatched, missed = offsets.match_inputs(
+            pickup_taps + good_taps, expected
+        )
+        assert len(matched) == self.BEATS
+        assert len(unmatched) == self.PICKUP
+        assert not missed
+
+        stats = offsets.summarize(matched, len(unmatched), len(missed))
+        assert stats.mean == pytest.approx(0.008)

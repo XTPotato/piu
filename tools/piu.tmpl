@@ -572,25 +572,47 @@
      * Clicks land on exact sample indices computed from the beat period, so
      * the reference the timing rig measures against is arithmetic rather than
      * something decoded from a file. Any offset measured is therefore the
-     * pipeline's, not the material's. */
-    makeClickTrack: function (bpm, beats, leadIn, accentEvery) {
+     * pipeline's, not the material's.
+     *
+     * ``pickup`` prepends unmeasured count-in clicks. Without them the player
+     * has nothing to lock onto and reliably misses or badly lags the first
+     * beat, which is not merely lost data: a first tap late enough to fall
+     * outside its own click's window lands inside the *next* one, and every
+     * following tap shifts with it. The run then reports a confident, tight,
+     * and completely wrong offset. The count-in is what stops that starting.
+     *
+     * Pickup clicks are pitched lower than the measured ones so the change is
+     * unmistakable, and the first measured beat is accented. */
+    makeClickTrack: function (bpm, beats, leadIn, accentEvery, pickup) {
       if (!this.init()) return false;
       try {
         var sr = this.ctx.sampleRate;
         var period = 60.0 / bpm;
         var tail = 0.5;
-        var length = Math.ceil((leadIn + beats * period + tail) * sr);
+        pickup = pickup || 0;
+        var total = pickup + beats;
+        var length = Math.ceil((leadIn + total * period + tail) * sr);
         var buffer = this.ctx.createBuffer(1, length, sr);
         var data = buffer.getChannelData(0);
 
         var clickSeconds = 0.012;
         var clickSamples = Math.floor(clickSeconds * sr);
 
-        for (var b = 0; b < beats; b++) {
+        for (var b = 0; b < total; b++) {
           var start = Math.round((leadIn + b * period) * sr);
-          var accent = accentEvery > 0 && b % accentEvery === 0;
-          var freq = accent ? 1600 : 1000;
-          var gain = accent ? 0.9 : 0.55;
+          var measured = b >= pickup;
+          var index = b - pickup;
+          var freq, gain;
+          if (!measured) {
+            freq = 700;          // count-in: clearly a different sound
+            gain = 0.5;
+          } else if (accentEvery > 0 && index % accentEvery === 0) {
+            freq = 1600;
+            gain = 0.9;
+          } else {
+            freq = 1000;
+            gain = 0.55;
+          }
           for (var i = 0; i < clickSamples && start + i < length; i++) {
             // Exponential decay keeps the transient sharp, so the perceived
             // onset sits at the sample index rather than smeared after it.
@@ -602,8 +624,9 @@
         this.buffer = buffer;
         this.status = "ready";
         this.error = "";
-        log("OK", "audio: click track built - " + beats + " beats at " + bpm +
-          " BPM, " + buffer.duration.toFixed(2) + "s, " + sr + "Hz");
+        log("OK", "audio: click track built - " + pickup + " pickup + " +
+          beats + " measured beats at " + bpm + " BPM, " +
+          buffer.duration.toFixed(2) + "s, " + sr + "Hz");
         return true;
       } catch (e) {
         this.status = "error";
