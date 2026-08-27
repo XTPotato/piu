@@ -74,30 +74,66 @@ often long after boot, with an error that points nowhere near the cause.
 | | Milestone | Status |
 |---|---|---|
 | **W0** | Retarget to WASM, deploy pipeline | **Done** |
-| **W1** | Web Audio clock + timing gate | **Gate passed**, one reading outstanding |
+| **W1** | Web Audio clock + timing gate | **Done** — gate passed, clock floor measured |
 | W2 | Vertical slice: judge, combo, lifebar, holds, results | Next |
 | W3 | Arcade presentation within the WASM budget | |
 | W4 | Song select; bundled + fetched content | |
 | W5 | Double/half-double, speed mods, rebinding, gamepad | |
 | W6 | Persistence (localStorage), release polish | |
 
-### W1 status in detail
+### W1 status in detail — closed
 
-Six human tapping runs, all clearing the gate:
+Eight human tapping runs, all clearing the gate, plus one machine-only probe of
+the clock itself.
 
-- **Spread 18.1–27.7ms** against a 42ms Perfect window. This is the gate's real
-  criterion — a constant bias is removed by calibration, spread is not.
-- **Bias drifted −100ms → −40ms** while spread stayed flat. A moving centre with
-  a stable spread is the player adapting, not the machine changing.
+**The clock's own floor** (`probeClock`, no human in the loop):
+
+```
+clock steps 2.67-8.00ms (13 updates in 60ms over 515528 reads);
+worst-case quantisation 8.00ms - good - a small fraction of the Perfect window
+```
+
+- **2.67ms is 128/48000 — exactly one render quantum. 8.00ms is 384/48000 —
+  exactly three.** `currentTime` only ever advances by whole quanta, so it is the
+  audio graph's own tick rather than a millisecond-coarsened or
+  fingerprint-defended timer. That was the thing worth ruling out.
+- Mean step is 60/13 = **4.6ms**. A read is stale by a uniform amount in
+  [0, step], so the clock injects a **−2.3ms bias** (calibration removes it) and
+  **1.3ms of spread** (nothing removes it).
+- Cross-checked against the human data rather than left as theory: removing
+  1.3ms in quadrature from a measured 15.2ms sd gives 15.14ms. **A perfect clock
+  would improve the spread by 0.4%.** The pipeline is not the limiting term.
+
+**The verdict string reads "good", not "excellent", and that is a flaw in the
+criterion rather than in the clock.** `ClockQuality.verdict` grades on
+`max_step`: 8.00/42.0 = 0.19, which lands in the "good" bucket, missing
+"excellent" by requiring under 4.2ms. Worst-case step is the honest number to
+*report*, since a single judgement really can be 8ms stale. It is the wrong
+number for "does this degrade play", where what reaches the spread is
+step/√12 at the typical step. Both are above. They disagree because they answer
+different questions, and the second question is the one W1 was gating on.
+
+**Human runs:**
+
+- **Spread 18.1–27.7ms across the first six, then 15.2 and 15.6ms** — the
+  tightest yet — against a 42ms Perfect window. Spread is the gate's real
+  criterion: a constant bias is removed by calibration, spread is not.
+- **Bias does not settle.** −100ms → −40ms over the first six, then −43 and
+  −59. Two consecutive runs 16ms apart with near-identical spread. Calibration
+  from one run is therefore good to roughly ±15ms — inside the window, but the
+  W2 calibration screen should average several runs rather than trust one.
 - Chrome reports `outputLatency` as **0.0ms**; only `baseLatency` (10ms) is
-  available, so the latency correction works from an incomplete number. Exactly
-  what the plan predicted. Calibration is the real fix, not this value.
+  available, so the correction works from an incomplete number. Exactly what the
+  plan predicted. A −40 to −60ms residual is consistent with real Windows output
+  latency plus human negative mean asynchrony — neither of which the browser is
+  disclosing. Calibration is the fix, not this value.
+- **4–5 unmatched taps with 0 missed clicks is correct behaviour, not a bug.**
+  The count-in clicks sit 0.5s apart and `MATCH_WINDOW` is 0.25s, so taps on the
+  four pickup beats match nothing by design. Do not "fix" this.
 
-**Outstanding:** a `clock quality:` line now logs on entering the timing screen,
-measuring `AudioContext.currentTime`'s step size — the machine's own floor,
-isolated from human jitter. Not yet read. If it comes back "excellent"
-(~2.7ms = one render quantum at 48kHz), the pipeline is effectively free and W2
-can begin.
+**Carried forward to W3:** 8ms worst-case staleness is comfortable against a
+42ms window and would not be against a tight one. Any judgement window below
+~30ms needs this measurement re-read before it ships.
 
 ---
 
