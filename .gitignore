@@ -24,3 +24,6 @@ settings.toml
 
 # pygbag build cache and output
 build/web-cache/
+
+# Debug artifacts (CI log downloads etc.) - never committed, never bundled
+logs_*.zip

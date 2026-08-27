@@ -50,7 +50,30 @@ jobs:
       - name: Build
         # --ume_block 0 disables pygbag's own click-to-start overlay; the
         # game ships its own gesture gate in piu/screens/boot.py.
-        run: python -m pygbag --build --ume_block 0 main.py
+        # --template supplies our patched index.html: it inlines the boot
+        # diagnostics ahead of pygbag's loader and fixes the stock template's
+        # doubled-slash browserfs URL. See tools/make_template.py.
+        run: >-
+          python -m pygbag --template tools/piu.tmpl
+          --ume_block 0 --build main.py
+
+      - name: Verify the diagnostics survived template substitution
+        run: |
+          python - <<'PY'
+          import pathlib, sys
+          html = pathlib.Path("build/web/index.html").read_text(encoding="utf-8")
+          required = [
+              ("boot diagnostics", "piu boot diagnostics"),
+              ("fetch wrapper", "window.fetch = function"),
+              ("rejection handler", "unhandledrejection"),
+          ]
+          missing = [name for name, needle in required if needle not in html]
+          if missing:
+              sys.exit("index.html is missing: " + ", ".join(missing))
+          if "0.9.3//browserfs" in html:
+              sys.exit("stock template's doubled-slash browserfs URL came back")
+          print(f"index.html OK ({len(html):,} bytes), diagnostics intact")
+          PY
       - name: Verify the bundle excludes the virtualenv and tests
         # pygbag's built-in ignore list covers /venv but not /.venv, so a
         # broken pygbag.ini would silently ship the whole environment.
@@ -59,8 +82,12 @@ jobs:
           import sys, zipfile, pathlib
           apk = next(pathlib.Path("build/web").glob("*.apk"))
           names = zipfile.ZipFile(apk).namelist()
+          # Allowlist rather than denylist: a stray archive or log dropped in
+          # the repo root would otherwise be packaged silently.
+          ALLOWED = {".py", ".json", ".ogg", ".png", ".toml", ".md"}
           leaked = [n for n in names
-                    if ".venv" in n or "site-packages" in n or "/tests/" in n]
+                    if ".venv" in n or "site-packages" in n or "/tests/" in n
+                    or pathlib.Path(n).suffix.lower() not in ALLOWED]
           size = apk.stat().st_size
           print(f"{apk.name}: {len(names)} entries, {size:,} bytes")
           if leaked:

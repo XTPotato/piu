@@ -104,6 +104,7 @@ class App:
             await initial.enter()
 
         self.running = True
+        frames = 0
         while self.running:
             dt = self._tick()
             self._pump_events()
@@ -117,6 +118,13 @@ class App:
             await self._draw()
 
             pygame.display.flip()
+
+            frames += 1
+            if frames == 1:
+                # The single most useful signal in a browser: if this never
+                # appears, the loop never completed a frame, and the problem
+                # is upstream of rendering.
+                runtime.log("OK", "first frame presented")
 
             # The yield that makes this work in the browser. Without it the
             # page never regains control and the tab hangs.

@@ -52,3 +52,41 @@ def describe() -> str:
     return "desktop dev build (CPython {}.{}, {})".format(
         *sys.version_info[:2], sys.platform
     )
+
+
+def log(kind: str, message: str, detail: str = "") -> None:
+    """Report a boot or runtime event.
+
+    In the browser this forwards to the on-page diagnostics panel installed by
+    ``tools/boot_diagnostics.js``, so a Python-side failure is visible to
+    whoever is looking at the page rather than only in the developer console.
+    On the desktop it prints.
+
+    Never raises: diagnostics must not be able to break the thing they are
+    diagnosing.
+    """
+    text = message if not detail else "{}\n{}".format(message, detail)
+    if IS_WEB:
+        try:
+            bridge = getattr(window(), "piuBootLog", None)
+            if bridge is not None:
+                bridge(kind, message, detail)
+                return
+        except Exception:  # noqa: BLE001 - see docstring
+            pass
+    print("[piu] {:<5} {}".format(kind, text), flush=True)
+
+
+def report_exception(context: str, error: BaseException) -> None:
+    """Log a formatted traceback for ``error``, tagged with what was happening.
+
+    A bare exception message rarely says which stage failed, so the context
+    string carries that - "importing the game package", "opening the display",
+    and so on.
+    """
+    import traceback  # noqa: PLC0415 - only needed on the failure path
+
+    detail = "".join(
+        traceback.format_exception(type(error), error, error.__traceback__)
+    ).rstrip()
+    log("FAIL", "{}: {}: {}".format(context, type(error).__name__, error), detail)
