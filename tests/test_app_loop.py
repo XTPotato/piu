@@ -24,7 +24,12 @@ import pygame  # noqa: E402
 
 from piu.app import App, Screen  # noqa: E402
 from piu.formats.chart import PlayMode  # noqa: E402
-from piu.screens.boot import KEY_CODES, BootScreen, PanelTestScreen  # noqa: E402
+from piu.screens.boot import (  # noqa: E402
+    KEY_CONSTANT_NAMES,
+    BootScreen,
+    PanelTestScreen,
+    key_codes,
+)
 from piu.input import layouts  # noqa: E402
 
 
@@ -137,9 +142,10 @@ class TestPanelTestScreen:
     def test_every_layout_key_resolves_to_a_pygame_code(self) -> None:
         # A key name in a layout with no entry here would be silently
         # unbindable, which is the kind of bug that only shows up in play.
+        codes = key_codes()
         for layout in layouts.LAYOUTS.values():
             for name in layout.all_keys:
-                assert name in KEY_CODES, "no pygame key code for {!r}".format(name)
+                assert name in codes, "no pygame key code for {!r}".format(name)
 
     def test_holding_a_key_lights_its_column(self, app: App) -> None:
         screen = PanelTestScreen(app)
@@ -177,3 +183,72 @@ class TestPanelTestScreen:
         for _ in range(3):
             asyncio.run(screen.draw(surface))
             screen._cycle_mode()
+
+
+class TestImportSafetyUnderPygbag:
+    """Regression guard for the failure that took the first web build down.
+
+    Under pygbag the ``pygame`` module is not fully populated when our modules
+    are imported, so any module-scope ``pygame.K_a`` raises AttributeError and
+    the game dies before its first frame. The desktop pygame has every constant
+    from the start, so an ordinary import test cannot see this - the probe
+    below stands in a deliberately incomplete pygame to reproduce it.
+    """
+
+    PROBE = """
+import sys, types
+
+# A pygame stripped of its key constants, standing in for pygbag's partially
+# initialised module at import time.
+import pygame as real_pygame
+import pygame.locals as real_locals
+
+stub = types.ModuleType("pygame")
+for name in dir(real_pygame):
+    if name.startswith("K_"):
+        continue
+    setattr(stub, name, getattr(real_pygame, name))
+
+locals_stub = types.ModuleType("pygame.locals")
+for name in dir(real_locals):
+    setattr(locals_stub, name, getattr(real_locals, name))
+stub.locals = locals_stub
+
+sys.modules["pygame"] = stub
+sys.modules["pygame.locals"] = locals_stub
+
+for module in [m for m in sys.modules if m.startswith("piu.")]:
+    del sys.modules[module]
+
+import piu.screens.boot as boot        # must not raise
+codes = boot.key_codes()               # resolves from pygame.locals instead
+assert codes["a"] == real_pygame.K_a, codes.get("a")
+assert codes["kp7"] == real_pygame.K_KP7, codes.get("kp7")
+print("OK", len(codes))
+"""
+
+    def test_module_imports_without_key_constants_on_pygame(self) -> None:
+        import subprocess
+        import sys
+
+        env = dict(os.environ, SDL_VIDEODRIVER="dummy", SDL_AUDIODRIVER="dummy")
+        result = subprocess.run(
+            [sys.executable, "-c", self.PROBE],
+            capture_output=True,
+            text=True,
+            env=env,
+            check=False,
+        )
+        assert result.returncode == 0, (
+            "importing piu.screens.boot touched a pygame key constant at module "
+            "scope, which is exactly what breaks the pygbag build:\n" + result.stderr
+        )
+        # pygame prints a version banner on import, so look for our marker
+        # anywhere rather than at the start.
+        assert "OK 15" in result.stdout, result.stdout
+
+    def test_constant_names_are_strings_not_values(self) -> None:
+        # If these ever become real constants again, the import-time crash is
+        # back. Keeping them as names is the fix, so assert the shape.
+        assert all(isinstance(v, str) for v in KEY_CONSTANT_NAMES.values())
+        assert KEY_CONSTANT_NAMES["a"] == "K_a"

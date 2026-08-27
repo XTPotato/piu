@@ -25,26 +25,71 @@ BACKGROUND = (12, 12, 18)
 TEXT = (236, 236, 240)
 MUTED = (128, 128, 140)
 
-#: pygame key constants for the key names used in piu.input.layouts. The
-#: layout tables stay pygame-free so they can be tested headlessly; this is
-#: where the names become real key codes.
-KEY_CODES: dict[str, int] = {
-    "a": pygame.K_a,
-    "w": pygame.K_w,
-    "s": pygame.K_s,
-    "d": pygame.K_d,
-    "x": pygame.K_x,
-    "kp1": pygame.K_KP1,
-    "kp7": pygame.K_KP7,
-    "kp5": pygame.K_KP5,
-    "kp9": pygame.K_KP9,
-    "kp3": pygame.K_KP3,
-    "n": pygame.K_n,
-    "y": pygame.K_y,
-    "h": pygame.K_h,
-    "i": pygame.K_i,
-    "comma": pygame.K_COMMA,
+#: Layout key names mapped to the *name* of the pygame constant that carries
+#: them. The layout tables in piu.input.layouts stay pygame-free so they can be
+#: tested headlessly; this is where those names become real key codes.
+#:
+#: These are stored as strings and resolved lazily on purpose. Under pygbag the
+#: pygame module is not fully populated when this module is imported, so
+#: evaluating pygame.K_a at module scope raises AttributeError and takes the
+#: whole game down before the first frame. Nothing here may touch a pygame
+#: attribute at import time.
+KEY_CONSTANT_NAMES: dict[str, str] = {
+    "a": "K_a",
+    "w": "K_w",
+    "s": "K_s",
+    "d": "K_d",
+    "x": "K_x",
+    "kp1": "K_KP1",
+    "kp7": "K_KP7",
+    "kp5": "K_KP5",
+    "kp9": "K_KP9",
+    "kp3": "K_KP3",
+    "n": "K_n",
+    "y": "K_y",
+    "h": "K_h",
+    "i": "K_i",
+    "comma": "K_COMMA",
 }
+
+_key_codes: dict[str, int] | None = None
+
+
+def key_codes() -> dict[str, int]:
+    """Resolve layout key names to pygame key codes, once, on first use.
+
+    Looks in ``pygame.locals`` first, which is where the constants actually
+    live, and falls back to the top-level ``pygame`` namespace that normally
+    re-exports them. A name that resolves nowhere is reported and skipped
+    rather than raising, so one missing constant cannot cost the whole game.
+    """
+    global _key_codes
+    if _key_codes is not None:
+        return _key_codes
+
+    from pygame import locals as pygame_locals
+
+    resolved: dict[str, int] = {}
+    missing: list[str] = []
+    for name, constant in KEY_CONSTANT_NAMES.items():
+        code = getattr(pygame_locals, constant, None)
+        if code is None:
+            code = getattr(pygame, constant, None)
+        if code is None:
+            missing.append(constant)
+        else:
+            resolved[name] = code
+
+    if missing:
+        runtime.log(
+            "WARN",
+            "pygame is missing key constants: {}".format(", ".join(missing)),
+            "Those keys will be unbindable. This usually means the pygame "
+            "build differs from the desktop one.",
+        )
+
+    _key_codes = resolved
+    return _key_codes
 
 
 def _font(size: int) -> pygame.font.Font:
@@ -118,9 +163,10 @@ class PanelTestScreen(Screen):
 
     def _rebuild_bindings(self) -> None:
         """Map pygame key codes to chart columns for the current mode."""
+        codes = key_codes()
         self._bindings: dict[int, int] = {}
         for key_name, column in self.layout.key_to_column(self.mode).items():
-            code = KEY_CODES.get(key_name)
+            code = codes.get(key_name)
             if code is not None:
                 self._bindings[code] = column
 
